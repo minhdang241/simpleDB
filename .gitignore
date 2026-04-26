@@ -1,0 +1,54 @@
+# Autotools generated files
+Makefile
+Makefile.in
+aclocal.m4
+autom4te.cache/
+config.guess
+config.h
+config.h.in
+config.log
+config.status
+config.sub
+configure
+libtool
+ltmain.sh
+m4/
+stamp-h1
+
+# Autotools helper scripts
+compile
+depcomp
+install-sh
+missing
+test-driver
+
+# Build artifacts
+*.o
+*.lo
+*.la
+.libs/
+.deps/
+.dirstamp
+
+# Compiled binaries
+chidb
+tests/check_btree
+tests/check_dbrecord
+tests/check_dbm
+tests/check_pager
+tests/check_utils
+
+# Flex/Bison generated files
+src/libchisql/sql-lexer.c
+src/libchisql/sql-lexer.h
+src/libchisql/sql-parser.c
+src/libchisql/sql-parser.h
+
+# Test output
+*.log
+*.trs
+test-suite.log
+
+# clangd
+.clangd
+compile_commands.json
