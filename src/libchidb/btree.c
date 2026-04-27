@@ -129,7 +129,36 @@ int chidb_Btree_close(BTree *bt)
 int chidb_Btree_getNodeByPage(BTree *bt, npage_t npage, BTreeNode **btn)
 {
     /* Your code goes here */
+    int err;
+    BTreeNode *node;
 
+    // Allocate node
+    node = (BTreeNode *)malloc(sizeof(BTreeNode));
+    if (!node) {
+      return CHIDB_ENOMEM;
+    }
+
+    // Read page
+    err = chidb_Pager_readPage(bt->pager, npage, &(node->page));
+    if (err) {
+      free(node);
+      return err;
+    }
+
+    // Initialize other fields
+    uint8_t *data = node->page->data;
+    int header = (npage == 1) ? 100 : 0;
+
+    node->type = data[header + PGHEADER_PGTYPE_OFFSET];
+    node->free_offset = get2byte(&data[header + PGHEADER_FREE_OFFSET]);
+    node->n_cells = get2byte(&data[header + PGHEADER_NCELLS_OFFSET]);
+    node->cells_offset = get2byte(&data[header + PGHEADER_CELL_OFFSET]);
+    node->right_page = get4byte(&data[header + PGHEADER_RIGHTPG_OFFSET]);
+    // + 4 since the right page takes 4 bytes
+    node->celloffset_array = &data[header + PGHEADER_RIGHTPG_OFFSET + 4];
+
+    // Update the output node
+    *btn = node;
     return CHIDB_OK;
 }
 
@@ -150,7 +179,8 @@ int chidb_Btree_getNodeByPage(BTree *bt, npage_t npage, BTreeNode **btn)
 int chidb_Btree_freeMemNode(BTree *bt, BTreeNode *btn)
 {
     /* Your code goes here */
-
+    chidb_Pager_releaseMemPage(bt->pager, btn->page);
+    free(btn);
     return CHIDB_OK;
 }
 
