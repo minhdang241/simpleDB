@@ -27,3 +27,8 @@ A chidb file contains:
 
 - All multi-byte integers are in big-endian, so use `get2byte`, `get4byte`, `put2byte`, `put4byte` instead of reading directly from the buffer `pager->data`.
 
+
+## Database Record
+It is used to store the contents of a single row. It is divided into 2 parts:
+- record header: specifies the types of the values contained in the record.
+- record data

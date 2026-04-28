@@ -417,11 +417,70 @@ int chidb_Btree_writeNode(BTree *bt, BTreeNode *btn)
  */
 int chidb_Btree_getCell(BTreeNode *btn, ncell_t ncell, BTreeCell *cell)
 {
-    /* Your code goes here */
+    int err;
+    if (ncell >= btn->n_cells) return CHIDB_ECELLNO;
+    uint16_t offset = get2byte(&(btn->celloffset_array[2 * ncell]));
+    uint8_t *data = &(btn->page->data[offset]);
+    cell->type = btn->type;
 
+    switch (btn->type) {
+    case PGTYPE_TABLE_LEAF: {
+        DBRecord *rec;
+
+        err = getVarint32(data + TABLELEAFCELL_SIZE_OFFSET,
+                          &cell->fields.tableLeaf.data_size);
+        if (err) return err;
+        err = getVarint32(data + TABLELEAFCELL_KEY_OFFSET,
+                          (uint32_t *)&cell->key);
+        if (err) return err;
+        err = chidb_DBRecord_unpack(&rec, data + TABLELEAFCELL_DATA_OFFSET);
+        if (err) return err;
+        cell->fields.tableLeaf.data =
+            (uint8_t *)malloc(sizeof(uint8_t) * rec->data_len);
+
+        if (!cell->fields.tableLeaf.data) {
+            chidb_DBRecord_destroy(rec);
+            return CHIDB_ENOMEM;
+        }
+        memcpy(cell->fields.tableLeaf.data, rec->data, rec->data_len);
+        chidb_DBRecord_destroy(rec);
+        break;
+    }
+    case PGTYPE_TABLE_INTERNAL: {
+        err = getVarint32(data + TABLEINTCELL_CHILD_OFFSET,
+                          (uint32_t *)&cell->fields.tableInternal.child_page);
+        if (err) return err;
+        err =
+            getVarint32(data + TABLEINTCELL_KEY_OFFSET, (uint32_t *)&cell->key);
+        if (err) return err;
+        break;
+    }
+    case PGTYPE_INDEX_LEAF: {
+        err = getVarint32(data + INDEXLEAFCELL_KEYIDX_OFFSET,
+                          (uint32_t *)&cell->key);
+        if (err) return err;
+        err = getVarint32(data + INDEXLEAFCELL_KEYPK_OFFSET,
+                          (uint32_t *)&cell->fields.indexLeaf.keyPk);
+        if (err) return err;
+        break;
+    }
+    case PGTYPE_INDEX_INTERNAL: {
+        err = getVarint32(data + INDEXINTCELL_CHILD_OFFSET,
+                          (uint32_t *)&cell->fields.indexInternal.child_page);
+        if (err) return err;
+        err = getVarint32(data + INDEXINTCELL_KEYIDX_OFFSET,
+                          (uint32_t *)&cell->key);
+        if (err) return err;
+        err = getVarint32(data + INDEXINTCELL_KEYPK_OFFSET,
+                          (uint32_t *)&cell->fields.indexInternal.keyPk);
+        if (err) return err;
+        break;
+    }
+    default:
+        break;
+    }
     return CHIDB_OK;
 }
-
 
 /* Insert a new cell into a B-Tree node
  *
