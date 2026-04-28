@@ -529,15 +529,99 @@ int chidb_Btree_insertCell(BTreeNode *btn, ncell_t ncell, BTreeCell *cell)
  * - CHIDB_ENOMEM: Could not allocate memory
  * - CHIDB_EIO: An I/O error has occurred when accessing the file
  */
+static void chidb_Btree_freeCell(BTreeCell cell) {
+    if (cell.type == PGTYPE_TABLE_LEAF) free(cell.fields.tableLeaf.data);
+}
 int chidb_Btree_find(BTree *bt, npage_t nroot, chidb_key_t key, uint8_t **data, uint16_t *size)
 {
-    /* Your code goes here */
+    int err;
+    BTreeNode *root;
+    BTreeCell cell;
+    err = chidb_Btree_getNodeByPage(bt, nroot, &root);
+    if (err) return err;
 
-    return CHIDB_OK;
+    while (1) {
+        if (root->n_cells == 0) {
+            if (root->type == PGTYPE_TABLE_LEAF) {
+                err = CHIDB_ENOTFOUND;
+                goto cleanup_root;
+            }
+            npage_t next = root->right_page;
+            chidb_Btree_freeMemNode(bt, root);
+            err = chidb_Btree_getNodeByPage(bt, next, &root);
+            if (err) return err;
+            continue;
+        }
+
+        ncell_t lo = 0, hi = root->n_cells;
+        bool found = false;
+
+        // Binary search
+        while (lo < hi) {
+            ncell_t mid = lo + (hi - lo) / 2;
+            err = chidb_Btree_getCell(root, mid, &cell);
+            if (err) {
+                chidb_Btree_freeMemNode(bt, root);
+                return err;
+            }
+            if (key < cell.key) {
+                hi = mid;
+                chidb_Btree_freeCell(cell);
+            } else if (key > cell.key) {
+                lo = mid + 1;
+                chidb_Btree_freeCell(cell);
+            } else {
+                lo = mid;
+                found = true;
+                break;
+            }
+        }
+
+        // Process leaf node
+        if (root->type == PGTYPE_TABLE_LEAF) {
+            if (!found) {
+                err = CHIDB_ENOTFOUND;
+                goto cleanup_root;
+            }
+            *data = malloc(cell.fields.tableLeaf.data_size);
+            if (!*data) {
+                chidb_Btree_freeCell(cell);
+                err = CHIDB_ENOMEM;
+                goto cleanup_root;
+            }
+            memcpy(*data, cell.fields.tableLeaf.data,
+                   cell.fields.tableLeaf.data_size);
+            *size = cell.fields.tableLeaf.data_size;
+
+            chidb_Btree_freeCell(cell);
+            chidb_Btree_freeMemNode(bt, root);
+            return CHIDB_OK;
+        }
+
+        /* Process internal node, move to child node */
+        npage_t next;
+        if (lo == root->n_cells) {
+            next = root->right_page;
+        } else {
+            /* If we didn't break early, we need to freshly fetch the cell */
+            if (!found) {
+                err = chidb_Btree_getCell(root, lo, &cell);
+                if (err) {
+                    chidb_Btree_freeMemNode(bt, root);
+                    return err;
+                }
+            }
+            next = cell.fields.tableInternal.child_page;
+            chidb_Btree_freeCell(cell);
+        }
+        chidb_Btree_freeMemNode(bt, root);
+        err = chidb_Btree_getNodeByPage(bt, next, &root);
+        if (err) return err;
+    }
+cleanup_root:
+    chidb_Btree_freeMemNode(bt, root);
+    return err;
 }
-
-
-
 /* Insert an entry into a table B-Tree
  *
  * This is a convenience function that wraps around chidb_Btree_insert.
