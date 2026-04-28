@@ -42,18 +42,22 @@
  *
  */
 
-
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <chidb/log.h>
+#include <unistd.h>
+#include "chidb/chidb.h"
 #include "chidbInt.h"
 #include "btree.h"
 #include "record.h"
 #include "pager.h"
 #include "util.h"
 
+#define HEADER_SIZE 100
 
 /* Open a B-Tree file
  *
@@ -79,9 +83,85 @@
  */
 int chidb_Btree_open(const char *filename, chidb *db, BTree **bt)
 {
-    /* Your code goes here */
+    int err;
+    uint8_t header[HEADER_SIZE];
+    BTree *tree = NULL;
+    Pager *pager = NULL;
 
+    err = chidb_Pager_open(&pager, filename);
+    if (err) return err;
+
+    err = chidb_Pager_readHeader(pager, header);
+
+    // Explicit handle unexpected erros during read
+    if (err != CHIDB_OK && err != CHIDB_NOHEADER) {
+        chidb_Pager_close(pager);
+        return err;
+    }
+
+    tree = (BTree *)malloc(sizeof(BTree));
+    if (!tree) {
+        err = CHIDB_ENOMEM;
+        goto cleanup_pager;
+    }
+
+    tree->db = db;
+    tree->pager = pager;
+
+    if (err == CHIDB_NOHEADER) {
+        err = chidb_Pager_setPageSize(pager, DEFAULT_PAGE_SIZE);
+        if (err) goto cleanup_tree;
+
+        npage_t npage;
+        err = chidb_Pager_allocatePage(pager, &npage);
+        if (err) goto cleanup_tree;
+
+        err = chidb_Btree_initEmptyNode(tree, npage, PGTYPE_TABLE_LEAF);
+        if (err) goto cleanup_tree;
+
+        BTreeNode *node;
+        err = chidb_Btree_getNodeByPage(tree, pager->n_pages, &node);
+        if (err) goto cleanup_tree;
+
+        memcpy(node->page->data, "SQLite format 3\0", 16);
+        put2byte(&(node->page->data[16]), pager->page_size);
+        put4byte(&(node->page->data[24]), 0);     // file change counter
+        put4byte(&(node->page->data[40]), 0);     // file change number
+        put4byte(&(node->page->data[48]), 20000); // page cache size
+        put4byte(&(node->page->data[60]), 0);     // user cookies
+
+        err = chidb_Btree_writeNode(tree, node);
+        chidb_Btree_freeMemNode(tree, node);
+        if (err) goto cleanup_tree;
+
+    } else {
+        if (memcmp(header, "SQLite format 3\0", 16) != 0) {
+            err = CHIDB_ECORRUPTHEADER;
+            goto cleanup_tree;
+        }
+
+        uint16_t pagesize = get2byte(&(header[16]));
+        err = chidb_Pager_setPageSize(pager, pagesize);
+        if (err) goto cleanup_tree;
+
+        if (header[18] != 1 || header[19] != 1 || header[20] != 0 ||
+            header[21] != 64 || header[22] != 32 || header[23] != 32 ||
+            get4byte(&header[48]) != 20000 || get4byte(&header[52]) != 0 ||
+            get4byte(&header[56]) != 1 || get4byte(&header[60]) != 0) {
+            err = CHIDB_ECORRUPTHEADER;
+            goto cleanup_tree;
+        }
+    }
+    *bt = tree;
+    db->bt = tree;
     return CHIDB_OK;
+
+// Centralized error cleanup
+cleanup_tree:
+    free(tree);
+cleanup_pager:
+    chidb_Pager_close(pager);
+    return err;
 }
 
 
@@ -100,7 +180,8 @@ int chidb_Btree_open(const char *filename, chidb *db, BTree **bt)
 int chidb_Btree_close(BTree *bt)
 {
     /* Your code goes here */
-
+    chidb_Pager_close(bt->pager);
+    free(bt);
     return CHIDB_OK;
 }
 
@@ -147,7 +228,8 @@ int chidb_Btree_getNodeByPage(BTree *bt, npage_t npage, BTreeNode **btn)
 
     // Initialize other fields
     uint8_t *data = node->page->data;
-    int header = (npage == 1) ? 100 : 0;
+    // Page 1 is special since the first 100bytes are used to store file header
+    int header = (npage == 1) ? HEADER_SIZE : 0;
 
     node->type = data[header + PGHEADER_PGTYPE_OFFSET];
     node->free_offset = get2byte(&data[header + PGHEADER_FREE_OFFSET]);
@@ -204,7 +286,18 @@ int chidb_Btree_freeMemNode(BTree *bt, BTreeNode *btn)
 int chidb_Btree_newNode(BTree *bt, npage_t *npage, uint8_t type)
 {
     /* Your code goes here */
+    int err;
+    err = chidb_Pager_allocatePage(bt->pager, npage);
+    if (err) {
+        chilog(DEBUG, "Failed to allocatePage %d", err);
+        return err;
+    }
 
+    err = chidb_Btree_initEmptyNode(bt, *npage, type);
+    if (err) {
+        chilog(DEBUG, "Failed to initEmptyNode %d", err);
+        return err;
+    }
     return CHIDB_OK;
 }
 
@@ -228,8 +321,37 @@ int chidb_Btree_newNode(BTree *bt, npage_t *npage, uint8_t type)
  */
 int chidb_Btree_initEmptyNode(BTree *bt, npage_t npage, uint8_t type)
 {
-    /* Your code goes here */
+    assert(npage <= bt->pager->n_pages);
+    int err;
+    BTreeNode *node;
 
+    /* Allocate and initialize empty node */
+    node = (BTreeNode *)malloc(sizeof(BTreeNode));
+    if (!node) {
+        return CHIDB_ENOMEM;
+    }
+    err = chidb_Pager_readPage(bt->pager, npage, &node->page);
+    if (err) {
+        chilog(DEBUG, "Failed to readPage %d", err);
+        free(node);
+        return CHIDB_EIO;
+    }
+    int header = (npage == 1) ? HEADER_SIZE : 0;
+    node->type = type;
+    node->free_offset = header + 12;
+    node->n_cells = 0;
+    node->cells_offset = bt->pager->page_size;
+    node->right_page = 0;
+    node->celloffset_array = &(node->page->data[header + 12]);
+
+    /* Write to page */
+    err = chidb_Btree_writeNode(bt, node);
+    if (err) {
+        chilog(DEBUG, "Failed to writeNode %d", err);
+        chidb_Btree_freeMemNode(bt, node);
+        return CHIDB_EIO;
+    }
+    chidb_Btree_freeMemNode(bt, node);
     return CHIDB_OK;
 }
 
@@ -254,8 +376,23 @@ int chidb_Btree_initEmptyNode(BTree *bt, npage_t npage, uint8_t type)
  */
 int chidb_Btree_writeNode(BTree *bt, BTreeNode *btn)
 {
-    /* Your code goes here */
+    int err;
+    uint8_t *data;
 
+    /* Update the in-memory page */
+    int header = (btn->page->npage == 1) ? HEADER_SIZE : 0;
+    data = btn->page->data;
+    data[header + PGHEADER_PGTYPE_OFFSET] = btn->type;
+    put2byte(&data[header + PGHEADER_FREE_OFFSET], btn->free_offset);
+    put2byte(&data[header + PGHEADER_NCELLS_OFFSET], btn->n_cells);
+    put2byte(&data[header + PGHEADER_CELL_OFFSET], btn->cells_offset);
+    put4byte(&data[header + PGHEADER_RIGHTPG_OFFSET], btn->right_page);
+
+    err = chidb_Pager_writePage(bt->pager, btn->page);
+    if (err) {
+        chilog(DEBUG, "Failed to write page with error %d", err);
+        return CHIDB_EIO;
+    }
     return CHIDB_OK;
 }
 
