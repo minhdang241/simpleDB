@@ -235,9 +235,18 @@ int chidb_Btree_getNodeByPage(BTree *bt, npage_t npage, BTreeNode **btn)
     node->free_offset = get2byte(&data[header + PGHEADER_FREE_OFFSET]);
     node->n_cells = get2byte(&data[header + PGHEADER_NCELLS_OFFSET]);
     node->cells_offset = get2byte(&data[header + PGHEADER_CELL_OFFSET]);
-    node->right_page = get4byte(&data[header + PGHEADER_RIGHTPG_OFFSET]);
-    // + 4 since the right page takes 4 bytes
-    node->celloffset_array = &data[header + PGHEADER_RIGHTPG_OFFSET + 4];
+
+    if (node->type == PGTYPE_TABLE_INTERNAL ||
+        node->type == PGTYPE_INDEX_INTERNAL) {
+        // + 4 since the right page takes 4 bytes
+        node->right_page = get4byte(&data[header + PGHEADER_RIGHTPG_OFFSET]);
+        node->celloffset_array = &data[header + PGHEADER_RIGHTPG_OFFSET + 4];
+    } else {
+        node->right_page = 0; // Safely zero it out
+        node->celloffset_array =
+            &data[header +
+                  PGHEADER_RIGHTPG_OFFSET]; // Starts where right_page would be
+    }
 
     // Update the output node
     *btn = node;
@@ -425,31 +434,27 @@ int chidb_Btree_getCell(BTreeNode *btn, ncell_t ncell, BTreeCell *cell)
 
     switch (btn->type) {
     case PGTYPE_TABLE_LEAF: {
-        DBRecord *rec;
-
         err = getVarint32(data + TABLELEAFCELL_SIZE_OFFSET,
                           &cell->fields.tableLeaf.data_size);
         if (err) return err;
+
         err = getVarint32(data + TABLELEAFCELL_KEY_OFFSET,
                           (uint32_t *)&cell->key);
         if (err) return err;
-        err = chidb_DBRecord_unpack(&rec, data + TABLELEAFCELL_DATA_OFFSET);
-        if (err) return err;
+
         cell->fields.tableLeaf.data =
-            (uint8_t *)malloc(sizeof(uint8_t) * rec->data_len);
+            (uint8_t *)malloc(cell->fields.tableLeaf.data_size);
 
         if (!cell->fields.tableLeaf.data) {
-            chidb_DBRecord_destroy(rec);
             return CHIDB_ENOMEM;
         }
-        memcpy(cell->fields.tableLeaf.data, rec->data, rec->data_len);
-        chidb_DBRecord_destroy(rec);
+        memcpy(cell->fields.tableLeaf.data, data + TABLELEAFCELL_DATA_OFFSET,
+               cell->fields.tableLeaf.data_size);
         break;
     }
     case PGTYPE_TABLE_INTERNAL: {
-        err = getVarint32(data + TABLEINTCELL_CHILD_OFFSET,
-                          (uint32_t *)&cell->fields.tableInternal.child_page);
-        if (err) return err;
+        cell->fields.tableInternal.child_page =
+            get4byte(data + TABLEINTCELL_CHILD_OFFSET);
         err =
             getVarint32(data + TABLEINTCELL_KEY_OFFSET, (uint32_t *)&cell->key);
         if (err) return err;
@@ -465,8 +470,8 @@ int chidb_Btree_getCell(BTreeNode *btn, ncell_t ncell, BTreeCell *cell)
         break;
     }
     case PGTYPE_INDEX_INTERNAL: {
-        err = getVarint32(data + INDEXINTCELL_CHILD_OFFSET,
-                          (uint32_t *)&cell->fields.indexInternal.child_page);
+        cell->fields.indexInternal.child_page =
+            get4byte(data + INDEXINTCELL_CHILD_OFFSET);
         if (err) return err;
         err = getVarint32(data + INDEXINTCELL_KEYIDX_OFFSET,
                           (uint32_t *)&cell->key);
