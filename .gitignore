@@ -52,3 +52,5 @@ test-suite.log
 # clangd
 .clangd
 compile_commands.json
+
+.vscode/*
