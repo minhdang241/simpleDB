@@ -59,6 +59,29 @@
 
 #define HEADER_SIZE 100
 
+static bool node_is_full(BTreeNode *btn, BTreeCell *btc) {
+    uint16_t cell_size;
+    switch (btc->type) {
+    case PGTYPE_TABLE_LEAF:
+        cell_size =
+            TABLELEAFCELL_SIZE_WITHOUTDATA + btc->fields.tableLeaf.data_size;
+        break;
+    case PGTYPE_TABLE_INTERNAL:
+        cell_size = TABLEINTCELL_SIZE;
+        break;
+    case PGTYPE_INDEX_LEAF:
+        cell_size = INDEXLEAFCELL_SIZE;
+        break;
+    case PGTYPE_INDEX_INTERNAL:
+        cell_size = INDEXINTCELL_SIZE;
+        break;
+    default:
+        return true;
+    }
+    /* +2 for the new offset-array entry */
+    return (btn->cells_offset - btn->free_offset) < cell_size + 2;
+}
+
 /* Open a B-Tree file
  *
  * This function opens a database file and verifies that the file
@@ -738,7 +761,6 @@ int chidb_Btree_insertInIndex(BTree *bt, npage_t nroot, chidb_key_t keyIdx, chid
     btc.key = keyIdx;
     btc.fields.indexLeaf.keyPk = keyPk;
     return chidb_Btree_insert(bt, nroot, &btc);
-    return CHIDB_OK;
 }
 
 
@@ -769,6 +791,80 @@ int chidb_Btree_insert(BTree *bt, npage_t nroot, BTreeCell *btc)
     /* Your code goes here */
     // TODO: check the need to split first
     int err;
+    BTreeNode *root;
+    err = chidb_Btree_getNodeByPage(bt, nroot, &root);
+    if (err) return err;
+    bool full = node_is_full(root, btc);
+    uint8_t old_type = root->type;
+    if (full) {
+        /* Allocate m2 */
+        npage_t npage_m2;
+        BTreeNode *m2;
+        BTreeCell cell;
+        err = chidb_Btree_newNode(bt, &npage_m2, old_type);
+        if (err) {
+            chidb_Btree_freeMemNode(bt, root);
+            return err;
+        }
+        uint8_t new_root_type =
+            (old_type == PGTYPE_INDEX_LEAF || old_type == PGTYPE_INDEX_INTERNAL)
+                ? PGTYPE_INDEX_INTERNAL
+                : PGTYPE_TABLE_INTERNAL;
+        /* Copy value from root to m2 */
+        err = chidb_Btree_getNodeByPage(bt, npage_m2, &m2);
+        if (err) {
+            chidb_Btree_freeMemNode(bt, root);
+            return err;
+        }
+        m2->right_page = root->right_page;
+        for (int i = 0; i < root->n_cells; i++) {
+            err = chidb_Btree_getCell(root, i, &cell);
+            if (err) {
+                chidb_Btree_freeMemNode(bt, root);
+                chidb_Btree_freeMemNode(bt, m2);
+                return err;
+            }
+            err = chidb_Btree_insertCell(m2, i, &cell);
+            if (err) {
+                chidb_Btree_freeCell(cell);
+                chidb_Btree_freeMemNode(bt, root);
+                chidb_Btree_freeMemNode(bt, m2);
+                return err;
+            }
+            chidb_Btree_freeCell(cell);
+        }
+
+        chidb_Btree_freeMemNode(bt, root);
+        err = chidb_Btree_writeNode(bt, m2);
+        if (err) {
+            chidb_Btree_freeMemNode(bt, m2);
+            return err;
+        }
+        chidb_Btree_freeMemNode(bt, m2);
+
+        /* re-init root as internal */
+        err = chidb_Btree_initEmptyNode(bt, nroot, new_root_type);
+        if (err) return err;
+
+        err = chidb_Btree_getNodeByPage(bt, nroot, &root);
+        if (err) return err;
+
+        root->right_page = npage_m2;
+
+        err = chidb_Btree_writeNode(bt, root);
+        if (err) {
+            chidb_Btree_freeMemNode(bt, root);
+            return err;
+        }
+        chidb_Btree_freeMemNode(bt, root);
+
+        /* Split */
+        npage_t npage_new;
+        err = chidb_Btree_split(bt, nroot, npage_m2, 0, &npage_new);
+        if (err) return err;
+        return chidb_Btree_insertNonFull(bt, nroot, btc);
+    }
+    chidb_Btree_freeMemNode(bt, root);
     return chidb_Btree_insertNonFull(bt, nroot, btc);
 }
 
@@ -843,6 +939,8 @@ int chidb_Btree_insertNonFull(BTree *bt, npage_t npage, BTreeCell *btc)
         chidb_Btree_freeMemNode(bt, root);
         return CHIDB_OK;
     } else {
+        npage_t next;
+        BTreeNode *child;
         ncell_t lo = 0, hi = root->n_cells;
         bool found = false;
 
@@ -866,8 +964,13 @@ int chidb_Btree_insertNonFull(BTree *bt, npage_t npage, BTreeCell *btc)
             }
         }
 
+        if (found && root->type == PGTYPE_INDEX_INTERNAL) {
+            chidb_Btree_freeCell(cell);
+            chidb_Btree_freeMemNode(bt, root);
+            return CHIDB_EDUPLICATE;
+        }
+
         /* Determine which child page to descend into */
-        npage_t next;
         if (lo == root->n_cells) {
             next = root->right_page;
         } else {
@@ -881,6 +984,17 @@ int chidb_Btree_insertNonFull(BTree *bt, npage_t npage, BTreeCell *btc)
                 next = cell.fields.indexInternal.child_page;
             chidb_Btree_freeCell(cell);
         }
+        err = chidb_Btree_getNodeByPage(bt, next, &child);
+        if (err) goto cleanup_root;
+        if (node_is_full(child, btc)) {
+            chidb_Btree_freeMemNode(bt, child);
+            chidb_Btree_freeMemNode(bt, root);
+            npage_t npage_new;
+            err = chidb_Btree_split(bt, npage, next, lo, &npage_new);
+            if (err) return err;
+            return chidb_Btree_insertNonFull(bt, npage, btc);
+        }
+        chidb_Btree_freeMemNode(bt, child);
         chidb_Btree_freeMemNode(bt, root);
         return chidb_Btree_insertNonFull(bt, next, btc);
     }
@@ -915,8 +1029,161 @@ cleanup_root:
  */
 int chidb_Btree_split(BTree *bt, npage_t npage_parent, npage_t npage_child, ncell_t parent_ncell, npage_t *npage_child2)
 {
-    /* Your code goes here */
+    int err;
+    BTreeNode *parent;
+    BTreeNode *child;
+    BTreeNode *new;
+    npage_t npage_new;
+    ncell_t median;
+    BTreeCell cell;
+    BTreeCell median_cell;
 
+    /* Get the child node*/
+    err = chidb_Btree_getNodeByPage(bt, npage_child, &child);
+    if (err) {
+        return err;
+    }
+
+    /* Create new node */
+    err = chidb_Btree_newNode(bt, &npage_new, child->type);
+    if (err) goto cleanup_child;
+
+    err = chidb_Btree_getNodeByPage(bt, npage_new, &new);
+    if (err) goto cleanup_child;
+
+    median = child->n_cells / 2;
+    ncell_t limit = (child->type == PGTYPE_TABLE_LEAF) ? median + 1 : median;
+    for (int i = 0; i < limit; i++) {
+        err = chidb_Btree_getCell(child, i, &cell);
+        if (err) goto cleanup_new;
+
+        err = chidb_Btree_insertCell(new, i, &cell);
+        if (err) {
+            chidb_Btree_freeCell(cell);
+            goto cleanup_new;
+        }
+        chidb_Btree_freeCell(cell);
+    }
+
+    /* Update the parent node */
+    err = chidb_Btree_getCell(child, median, &median_cell);
+    if (err) goto cleanup_new;
+
+    /* Capture right-half cells */
+    ncell_t n_right = child->n_cells - (median + 1);
+    BTreeCell *right_cells = NULL;
+    if (n_right > 0) {
+        right_cells = malloc(sizeof(BTreeCell) * n_right);
+        if (!right_cells) {
+            chidb_Btree_freeCell(median_cell);
+            err = CHIDB_ENOMEM;
+            goto cleanup_new;
+        }
+        for (ncell_t i = 0; i < n_right; i++) {
+            err = chidb_Btree_getCell(child, median + 1 + i, &right_cells[i]);
+            if (err) {
+                for (ncell_t j = 0; j < i; j++)
+                    chidb_Btree_freeCell(right_cells[j]);
+                free(right_cells);
+                chidb_Btree_freeCell(median_cell);
+                goto cleanup_new;
+            }
+        }
+    }
+
+    if (child->type == PGTYPE_TABLE_INTERNAL) {
+        new->right_page = median_cell.fields.tableInternal.child_page;
+    } else if (child->type == PGTYPE_INDEX_INTERNAL) {
+        new->right_page = median_cell.fields.indexInternal.child_page;
+    }
+
+    npage_t right_page = child->right_page;
+
+    err = chidb_Btree_getNodeByPage(bt, npage_parent, &parent);
+    if (err) {
+        for (ncell_t i = 0; i < n_right; i++)
+            chidb_Btree_freeCell(right_cells[i]);
+        free(right_cells);
+        chidb_Btree_freeCell(median_cell);
+        goto cleanup_new;
+    }
+
+    cell.type = parent->type;
+    cell.key = median_cell.key;
+    if (cell.type == PGTYPE_TABLE_INTERNAL) {
+        cell.fields.tableInternal.child_page = npage_new;
+    } else {
+        cell.fields.indexInternal.child_page = npage_new;
+        cell.fields.indexInternal.keyPk =
+            median_cell.type == PGTYPE_INDEX_INTERNAL
+                ? median_cell.fields.indexInternal.keyPk
+                : median_cell.fields.indexLeaf.keyPk;
+    }
+
+    err = chidb_Btree_insertCell(parent, parent_ncell, &cell);
+    if (err) {
+        for (ncell_t i = 0; i < n_right; i++)
+            chidb_Btree_freeCell(right_cells[i]);
+        free(right_cells);
+        chidb_Btree_freeCell(median_cell);
+        goto cleanup_parent;
+    }
+    chidb_Btree_freeCell(median_cell);
+    chidb_Btree_freeCell(cell);
+
+    /* Rebuild child */
+    err = chidb_Btree_initEmptyNode(bt, npage_child, child->type);
+    if (err) {
+        for (ncell_t i = 0; i < n_right; i++)
+            chidb_Btree_freeCell(right_cells[i]);
+        free(right_cells);
+        goto cleanup_parent;
+    }
+
+    chidb_Btree_freeMemNode(bt, child);
+    err = chidb_Btree_getNodeByPage(bt, npage_child, &child);
+
+    if (err) {
+        for (ncell_t i = 0; i < n_right; i++)
+            chidb_Btree_freeCell(right_cells[i]);
+        free(right_cells);
+        child = NULL;
+        goto cleanup_parent;
+    }
+
+    for (int i = 0; i < n_right; i++) {
+        err = chidb_Btree_insertCell(child, i, &right_cells[i]);
+        chidb_Btree_freeCell(right_cells[i]);
+        if (err) {
+            for (ncell_t j = i + 1; j < n_right; j++)
+                chidb_Btree_freeCell(right_cells[j]);
+            free(right_cells);
+            goto cleanup_parent;
+        }
+    }
+    free(right_cells);
+    child->right_page = right_page;
+
+    /* Persist all three modified nodes */
+    err = chidb_Btree_writeNode(bt, new);
+    if (err) goto cleanup_parent;
+    err = chidb_Btree_writeNode(bt, child);
+    if (err) goto cleanup_parent;
+    err = chidb_Btree_writeNode(bt, parent);
+    if (err) goto cleanup_parent;
+
+    *npage_child2 = npage_new;
+    chidb_Btree_freeMemNode(bt, parent);
+    chidb_Btree_freeMemNode(bt, new);
+    chidb_Btree_freeMemNode(bt, child);
     return CHIDB_OK;
+
+cleanup_parent:
+    chidb_Btree_freeMemNode(bt, parent);
+cleanup_new:
+    chidb_Btree_freeMemNode(bt, new);
+cleanup_child:
+    if (child) chidb_Btree_freeMemNode(bt, child);
+    return err;
 }
 
