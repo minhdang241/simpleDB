@@ -191,24 +191,54 @@ int chidb_dbm_op_Key (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_Integer (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
-
+    int err;
+    int reg_number = op->p2;
+    int val = op->p1;
+    int size = stmt->nReg;
+    if (reg_number >= size) {
+        size = reg_number + 1;
+    }
+    err = chidb_stmt_set_reg(stmt, size, REG_INT32);
+    if (err) {
+        return err;
+    }
+    stmt->reg[reg_number].value.i = val;
     return CHIDB_OK;
 }
 
 
 int chidb_dbm_op_String (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
-
+    int err;
+    int reg_number = op->p2;
+    int len = op->p1;
+    char *s = op->p4;
+    int size = stmt->nReg;
+    if (reg_number >= size) {
+        size = reg_number + 1;
+    }
+    err = chidb_stmt_set_reg(stmt, size, REG_STRING);
+    if (err) {
+        return err;
+    }
+    stmt->reg[reg_number].value.s = malloc(sizeof(char) * len);
+    memcpy(stmt->reg[reg_number].value.s, s, len);
     return CHIDB_OK;
 }
 
 
 int chidb_dbm_op_Null (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
-
+    int err;
+    int reg_number = op->p2;
+    int size = stmt->nReg;
+    if (reg_number >= size) {
+        size = reg_number + 1;
+    }
+    err = chidb_stmt_set_reg(stmt, size, REG_NULL);
+    if (err) {
+        return err;
+    }
     return CHIDB_OK;
 }
 

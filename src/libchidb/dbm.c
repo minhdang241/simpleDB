@@ -378,6 +378,18 @@ int realloc_ops(chidb_stmt *stmt, uint32_t size)
     return CHIDB_OK;
 }
 
+int chidb_stmt_set_reg(chidb_stmt *stmt, uint32_t size, register_type_t type) {
+    if (size > stmt->nReg) {
+        stmt->reg = realloc(stmt->reg, sizeof(chidb_dbm_register_t) * size);
+        if (stmt->reg == NULL) return CHIDB_ENOMEM;
+        stmt->nReg = size;
+    }
+    for (int i = 0; i < stmt->nReg; i++) {
+        stmt->reg[i].type = type;
+    }
+    return CHIDB_OK;
+}
+
 /* Reallocates the number of registers in the DBM to be
  * to be "size" registers. All new registers are set to type REG_UNSPECIFIED */
 int realloc_reg(chidb_stmt *stmt, uint32_t size)

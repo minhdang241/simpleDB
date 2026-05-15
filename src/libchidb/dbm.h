@@ -45,6 +45,7 @@
 
 
 int chidb_stmt_init(chidb_stmt *stmt, chidb *db);
+int chidb_stmt_set_reg(chidb_stmt *stmt, uint32_t size, register_type_t type);
 int chidb_stmt_free(chidb_stmt *stmt);
 int chidb_stmt_set_op(chidb_stmt *stmt, chidb_dbm_op_t *op, uint32_t pos);
 int chidb_stmt_exec(chidb_stmt *stmt);
