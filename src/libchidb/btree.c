@@ -148,17 +148,35 @@ int chidb_Btree_open(const char *filename, chidb *db, BTree **bt)
 
         memcpy(node->page->data, "SQLite format 3\0", 16);
         put2byte(&(node->page->data[16]), pager->page_size);
-        put4byte(&(node->page->data[24]), 0);     // file change counter
-        put4byte(&(node->page->data[40]), 0);     // file change number
-        put4byte(&(node->page->data[48]), 20000); // page cache size
-        put4byte(&(node->page->data[60]), 0);     // user cookies
+        node->page->data[18] = 1;
+        node->page->data[19] = 1;
+        node->page->data[20] = 0;
+        node->page->data[21] = 64;
+        node->page->data[22] = 32;
+        node->page->data[23] = 32;
+        put4byte(&(node->page->data[24]), 0);
+        put4byte(&(node->page->data[32]), 0);
+        put4byte(&(node->page->data[36]), 0);
+        put4byte(&(node->page->data[40]), 0);
+        put4byte(&(node->page->data[44]), 1);
+        put4byte(&(node->page->data[48]), 20000);
+        put4byte(&(node->page->data[52]), 0);
+        put4byte(&(node->page->data[56]), 1);
+        put4byte(&(node->page->data[60]), 0);
+        put4byte(&(node->page->data[64]), 0);
 
         err = chidb_Btree_writeNode(tree, node);
         chidb_Btree_freeMemNode(tree, node);
         if (err) goto cleanup_tree;
 
     } else {
-        if (memcmp(header, "SQLite format 3\0", 16) != 0) {
+        if (strcmp((char *)header, "SQLite format 3") || header[18] != 1 ||
+            header[19] != 1 || header[20] != 0 || header[21] != 64 ||
+            header[22] != 32 || header[23] != 32 ||
+            get4byte(&header[32]) != 0 || get4byte(&header[36]) != 0 ||
+            get4byte(&header[44]) != 1 || get4byte(&header[52]) != 0 ||
+            get4byte(&header[56]) != 1 || get4byte(&header[64]) != 0 ||
+            get4byte(&header[48]) != 20000) {
             err = CHIDB_ECORRUPTHEADER;
             goto cleanup_tree;
         }
@@ -166,14 +184,6 @@ int chidb_Btree_open(const char *filename, chidb *db, BTree **bt)
         uint16_t pagesize = get2byte(&(header[16]));
         err = chidb_Pager_setPageSize(pager, pagesize);
         if (err) goto cleanup_tree;
-
-        if (header[18] != 1 || header[19] != 1 || header[20] != 0 ||
-            header[21] != 64 || header[22] != 32 || header[23] != 32 ||
-            get4byte(&header[48]) != 20000 || get4byte(&header[52]) != 0 ||
-            get4byte(&header[56]) != 1 || get4byte(&header[60]) != 0) {
-            err = CHIDB_ECORRUPTHEADER;
-            goto cleanup_tree;
-        }
     }
     *bt = tree;
     db->bt = tree;
