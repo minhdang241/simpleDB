@@ -384,9 +384,6 @@ int chidb_stmt_set_reg(chidb_stmt *stmt, uint32_t size, register_type_t type) {
         if (stmt->reg == NULL) return CHIDB_ENOMEM;
         stmt->nReg = size;
     }
-    for (int i = 0; i < stmt->nReg; i++) {
-        stmt->reg[i].type = type;
-    }
     return CHIDB_OK;
 }
 

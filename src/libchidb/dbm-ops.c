@@ -202,6 +202,7 @@ int chidb_dbm_op_Integer (chidb_stmt *stmt, chidb_dbm_op_t *op)
     if (err) {
         return err;
     }
+    stmt->reg[reg_number].type = REG_INT32;
     stmt->reg[reg_number].value.i = val;
     return CHIDB_OK;
 }
@@ -221,6 +222,7 @@ int chidb_dbm_op_String (chidb_stmt *stmt, chidb_dbm_op_t *op)
     if (err) {
         return err;
     }
+    stmt->reg[reg_number].type = REG_STRING;
     stmt->reg[reg_number].value.s = malloc(sizeof(char) * len);
     memcpy(stmt->reg[reg_number].value.s, s, len);
     return CHIDB_OK;
@@ -239,6 +241,7 @@ int chidb_dbm_op_Null (chidb_stmt *stmt, chidb_dbm_op_t *op)
     if (err) {
         return err;
     }
+    stmt->reg[reg_number].type = REG_NULL;
     return CHIDB_OK;
 }
 
@@ -269,31 +272,133 @@ int chidb_dbm_op_Insert (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_Eq (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t r1 = op->p1;
+    int32_t addr = op->p2;
+    int32_t r2 = op->p3;
+    register_type_t type = stmt->reg[r1].type;
+    if (type == stmt->reg[r2].type) {
 
+        switch (type) {
+        case REG_INT32:
+            if (stmt->reg[r1].value.i == stmt->reg[r2].value.i) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_STRING:
+            if (strcmp(stmt->reg[r1].value.s, stmt->reg[r2].value.s) == 0) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_BINARY:
+            /* TODO: Check value. Currently not supported by DMB file format. */
+            break;
+        case REG_UNSPECIFIED:
+        case REG_NULL:
+            /* Nothing to do, since we've already checked that the types of the
+             * registers match */
+            break;
+        }
+    }
     return CHIDB_OK;
 }
 
+int chidb_dbm_op_Ne(chidb_stmt *stmt, chidb_dbm_op_t *op) {
 
-int chidb_dbm_op_Ne (chidb_stmt *stmt, chidb_dbm_op_t *op)
-{
-    /* Your code goes here */
+    int32_t r1 = op->p1;
+    int32_t addr = op->p2;
+    int32_t r2 = op->p3;
+    register_type_t type = stmt->reg[r1].type;
+    if (type == stmt->reg[r2].type) {
 
+        switch (type) {
+        case REG_INT32:
+            if (stmt->reg[r1].value.i != stmt->reg[r2].value.i) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_STRING:
+            if (strcmp(stmt->reg[r1].value.s, stmt->reg[r2].value.s) != 0) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_BINARY:
+            /* TODO: Check value. Currently not supported by DMB file format. */
+            break;
+        case REG_UNSPECIFIED:
+        case REG_NULL:
+            /* Nothing to do, since we've already checked that the types of the
+             * registers match */
+            break;
+        }
+    } else {
+        stmt->pc = addr;
+    }
     return CHIDB_OK;
 }
-
 
 int chidb_dbm_op_Lt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
     /* Your code goes here */
+    int32_t r1 = op->p1;
+    int32_t addr = op->p2;
+    int32_t r2 = op->p3;
+    register_type_t type = stmt->reg[r1].type;
+    if (type == stmt->reg[r2].type) {
 
+        switch (type) {
+        case REG_INT32:
+            if (stmt->reg[r1].value.i > stmt->reg[r2].value.i) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_STRING:
+            if (strcmp(stmt->reg[r1].value.s, stmt->reg[r2].value.s) > 0) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_BINARY:
+            /* TODO: Check value. Currently not supported by DMB file format. */
+            break;
+        case REG_UNSPECIFIED:
+        case REG_NULL:
+            /* Nothing to do, since we've already checked that the types of the
+             * registers match */
+            break;
+        }
+    }
     return CHIDB_OK;
 }
 
 
 int chidb_dbm_op_Le (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t r1 = op->p1;
+    int32_t addr = op->p2;
+    int32_t r2 = op->p3;
+    register_type_t type = stmt->reg[r1].type;
+    if (type == stmt->reg[r2].type) {
+
+        switch (type) {
+        case REG_INT32:
+            if (stmt->reg[r1].value.i >= stmt->reg[r2].value.i) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_STRING:
+            if (strcmp(stmt->reg[r1].value.s, stmt->reg[r2].value.s) >= 0) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_BINARY:
+            /* TODO: Check value. Currently not supported by DMB file format. */
+            break;
+        case REG_UNSPECIFIED:
+        case REG_NULL:
+            /* Nothing to do, since we've already checked that the types of the
+             * registers match */
+            break;
+        }
+    }
 
     return CHIDB_OK;
 }
@@ -302,6 +407,34 @@ int chidb_dbm_op_Le (chidb_stmt *stmt, chidb_dbm_op_t *op)
 int chidb_dbm_op_Gt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
     /* Your code goes here */
+    /* Your code goes here */
+    int32_t r1 = op->p1;
+    int32_t addr = op->p2;
+    int32_t r2 = op->p3;
+    register_type_t type = stmt->reg[r1].type;
+    if (type == stmt->reg[r2].type) {
+
+        switch (type) {
+        case REG_INT32:
+            if (stmt->reg[r1].value.i < stmt->reg[r2].value.i) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_STRING:
+            if (strcmp(stmt->reg[r1].value.s, stmt->reg[r2].value.s) < 0) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_BINARY:
+            /* TODO: Check value. Currently not supported by DMB file format. */
+            break;
+        case REG_UNSPECIFIED:
+        case REG_NULL:
+            /* Nothing to do, since we've already checked that the types of the
+             * registers match */
+            break;
+        }
+    }
 
     return CHIDB_OK;
 }
@@ -310,6 +443,34 @@ int chidb_dbm_op_Gt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 int chidb_dbm_op_Ge (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
     /* Your code goes here */
+    /* Your code goes here */
+    int32_t r1 = op->p1;
+    int32_t addr = op->p2;
+    int32_t r2 = op->p3;
+    register_type_t type = stmt->reg[r1].type;
+    if (type == stmt->reg[r2].type) {
+
+        switch (type) {
+        case REG_INT32:
+            if (stmt->reg[r1].value.i <= stmt->reg[r2].value.i) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_STRING:
+            if (strcmp(stmt->reg[r1].value.s, stmt->reg[r2].value.s) <= 0) {
+                stmt->pc = addr;
+            }
+            break;
+        case REG_BINARY:
+            /* TODO: Check value. Currently not supported by DMB file format. */
+            break;
+        case REG_UNSPECIFIED:
+        case REG_NULL:
+            /* Nothing to do, since we've already checked that the types of the
+             * registers match */
+            break;
+        }
+    }
 
     return CHIDB_OK;
 }
@@ -435,7 +596,7 @@ int chidb_dbm_op_SCopy (chidb_stmt *stmt, chidb_dbm_op_t *op)
 int chidb_dbm_op_Halt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
     /* Your code goes here */
-
+    stmt->endOp = 0;
     return CHIDB_OK;
 }
 
