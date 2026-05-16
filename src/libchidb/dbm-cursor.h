@@ -44,6 +44,7 @@
 #include "chidbInt.h"
 #include "btree.h"
 
+#define MAX_CURSOR_DEPTH 20
 typedef enum chidb_dbm_cursor_type
 {
     CURSOR_UNSPECIFIED,
@@ -51,15 +52,25 @@ typedef enum chidb_dbm_cursor_type
     CURSOR_WRITE
 } chidb_dbm_cursor_type_t;
 
+typedef struct {
+    uint32_t pagenum;
+    uint32_t cell_idx;
+} CursorFrame;
 typedef struct chidb_dbm_cursor
 {
     chidb_dbm_cursor_type_t type;
 
     /* Your code goes here */
+    CursorFrame path_stack[MAX_CURSOR_DEPTH];
+    int top;
+    BTree *tree;
+    npage_t root_page;
 
 } chidb_dbm_cursor_t;
 
 /* Cursor function definitions go here */
-
+int cursor_traverse_leftmost(chidb_dbm_cursor_t *cur, uint32_t start_page_num);
+int cursor_rewind(chidb_dbm_cursor_t *cur);
+int cursor_get_cell(chidb_dbm_cursor_t *cur, BTreeCell *out_cell);
 
 #endif /* DBM_CURSOR_H_ */

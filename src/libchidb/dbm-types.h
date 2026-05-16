@@ -274,3 +274,4 @@ struct chidb_stmt
 
 
 #endif /* DBM_TYPES_H_ */
+
