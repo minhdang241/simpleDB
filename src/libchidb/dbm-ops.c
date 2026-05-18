@@ -38,6 +38,7 @@
  */
 
 #include "chidb/chidb.h"
+#include "chisql/chisql.h"
 #include "dbm.h"
 #include "btree.h"
 #include "record.h"
@@ -319,16 +320,94 @@ int chidb_dbm_op_SeekLe (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_Column (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int err;
+    int32_t cursor_index = op->p1;
+    int32_t column_index = op->p2;
+    int32_t reg_number = op->p3;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
+    if (column_index < 0 || reg_number < 0) return CHIDB_EMISMATCH;
 
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    BTreeCell cell;
+    err = cursor_get_cell(cur, &cell);
+    if (err) return err;
+    if (cell.type != PGTYPE_TABLE_LEAF) return CHIDB_EMISMATCH;
+    DBRecord *r;
+    err = chidb_DBRecord_unpack(&r, cell.fields.tableLeaf.data);
+    if (err) return err;
+    if (column_index >= r->nfields) {
+        chidb_DBRecord_destroy(r);
+        return CHIDB_EMISMATCH;
+    }
+    if ((uint32_t)reg_number >= stmt->nReg) {
+        err = chidb_stmt_set_reg(stmt, reg_number + 1, REG_UNSPECIFIED);
+        if (err) {
+            chidb_DBRecord_destroy(r);
+            return err;
+        }
+    }
+    chidb_dbm_register_t *dst = &stmt->reg[reg_number];
+    int type = chidb_DBRecord_getType(r, column_index);
+    if (type == SQL_NULL) {
+        dst->type = REG_NULL;
+    } else if (type == SQL_INTEGER_1BYTE) {
+        int8_t v;
+        chidb_DBRecord_getInt8(r, column_index, &v);
+        dst->type = REG_INT32;
+        dst->value.i = v;
+    } else if (type == SQL_INTEGER_2BYTE) {
+        int16_t v;
+        chidb_DBRecord_getInt16(r, column_index, &v);
+        dst->type = REG_INT32;
+        dst->value.i = v;
+    } else if (type == SQL_INTEGER_4BYTE) {
+        int32_t v;
+        chidb_DBRecord_getInt32(r, column_index, &v);
+        dst->type = REG_INT32;
+        dst->value.i = v;
+    } else if (type >= SQL_TEXT) {
+        char *s;
+        err = chidb_DBRecord_getString(r, column_index, &s);
+        if (err) {
+            chidb_DBRecord_destroy(r);
+            return err;
+        }
+        dst->type = REG_STRING;
+        dst->value.s = s; /* getString
+malloc'd it */
+    } else {
+        chidb_DBRecord_destroy(r);
+        return CHIDB_EMISMATCH;
+    }
+    chidb_DBRecord_destroy(r);
     return CHIDB_OK;
 }
 
 
 int chidb_dbm_op_Key (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
 
+    int err;
+    int32_t cursor_index = op->p1;
+    int32_t reg_number = op->p2;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
+    if (reg_number < 0) return CHIDB_EMISMATCH;
+
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    BTreeCell cell;
+    err = cursor_get_cell(cur, &cell);
+    if (err) return err;
+    if ((uint32_t)reg_number >= stmt->nReg) {
+        err = chidb_stmt_set_reg(stmt, reg_number + 1, REG_UNSPECIFIED);
+        if (err) {
+            return err;
+        }
+    }
+    chidb_dbm_register_t *dst = &stmt->reg[reg_number];
+    dst->type = REG_INT32;
+    dst->value.i = (int32_t) cell.key;
     return CHIDB_OK;
 }
 
@@ -392,9 +471,14 @@ int chidb_dbm_op_Null (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_ResultRow (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
-
-    return CHIDB_OK;
+    int32_t start_reg = op->p1;
+    int32_t ncols = op->p2;
+    if (start_reg < 0 || ncols < 0) return CHIDB_EMISMATCH;
+    if (ncols > 0 && !EXISTS_REGISTER(stmt, start_reg + ncols - 1))
+        return CHIDB_EMISMATCH;
+    stmt->startRR = (uint32_t)start_reg;
+    stmt->nRR = (uint32_t)ncols;
+    return CHIDB_ROW;
 }
 
 
