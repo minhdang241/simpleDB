@@ -481,20 +481,83 @@ int chidb_dbm_op_ResultRow (chidb_stmt *stmt, chidb_dbm_op_t *op)
     return CHIDB_ROW;
 }
 
+int chidb_dbm_op_MakeRecord(chidb_stmt *stmt, chidb_dbm_op_t *op) {
 
-int chidb_dbm_op_MakeRecord (chidb_stmt *stmt, chidb_dbm_op_t *op)
-{
-    /* Your code goes here */
+    int err;
+    int32_t start_reg = op->p1;
+    int32_t ncols = op->p2;
+    int32_t dst_reg = op->p3;
+    if (start_reg < 0 || ncols <= 0 || dst_reg < 0) return CHIDB_EMISMATCH;
+    if (!EXISTS_REGISTER(stmt, start_reg + ncols - 1)) return CHIDB_EMISMATCH;
 
+    DBRecordBuffer rb;
+    err = chidb_DBRecord_create_empty(&rb, (uint8_t)ncols);
+    if (err) return err;
+    for (int32_t i = 0; i < ncols; i++) {
+        chidb_dbm_register_t *r = &stmt->reg[start_reg + i];
+        switch (r->type) {
+        case REG_NULL:
+            err = chidb_DBRecord_appendNull(&rb);
+            break;
+        case REG_INT32:
+            err = chidb_DBRecord_appendInt32(&rb, r->value.i);
+            break;
+        case REG_STRING:
+            err = chidb_DBRecord_appendString(&rb, r->value.s);
+            break;
+        case REG_UNSPECIFIED:
+        case REG_BINARY:
+        default:
+            return CHIDB_EMISMATCH;
+        }
+        if (err) return err;
+    }
+
+    DBRecord *r;
+    err = chidb_DBRecord_finalize(&rb, &r);
+    if (err) return err;
+    uint8_t *packed;
+    err = chidb_DBRecord_pack(r, &packed);
+    if (err) {
+        chidb_DBRecord_destroy(r);
+        return err;
+    }
+    uint32_t packed_len = r->packed_len;
+    chidb_DBRecord_destroy(r);
+    if ((uint32_t)dst_reg >= stmt->nReg) {
+        err = chidb_stmt_set_reg(stmt, dst_reg + 1, REG_UNSPECIFIED);
+        if (err) {
+            free(packed);
+            return err;
+        }
+    }
+    chidb_dbm_register_t *dst = &stmt->reg[dst_reg];
+    dst->type = REG_BINARY;
+    dst->value.bin.bytes = packed;
+    dst->value.bin.nbytes = packed_len;
     return CHIDB_OK;
 }
 
-
 int chidb_dbm_op_Insert (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t cursor_index = op->p1;
+    int32_t rec_reg = op->p2;
+    int32_t key_reg = op->p3;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
+    if (!EXISTS_REGISTER(stmt, rec_reg) ||
+        stmt->reg[rec_reg].type != REG_BINARY)
+        return CHIDB_EMISMATCH;
+    if (!EXISTS_REGISTER(stmt, key_reg) || stmt->reg[key_reg].type != REG_INT32)
+        return CHIDB_EMISMATCH;
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    if (cur->type != CURSOR_WRITE) return CHIDB_EMISMATCH;
 
-    return CHIDB_OK;
+    chidb_key_t key = (chidb_key_t)stmt->reg[key_reg].value.i;
+    uint8_t *data = stmt->reg[rec_reg].value.bin.bytes;
+    uint32_t n = stmt->reg[rec_reg].value.bin.nbytes;
+    return chidb_Btree_insertInTable(cur->tree, cur->root_page, key, data,
+                                     (uint16_t)n);
 }
 
 
