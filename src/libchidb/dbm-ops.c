@@ -766,6 +766,48 @@ int chidb_dbm_op_Ge (chidb_stmt *stmt, chidb_dbm_op_t *op)
     return CHIDB_OK;
 }
 
+typedef enum { IDX_CMP_GT, IDX_CMP_GE, IDX_CMP_LT, IDX_CMP_LE } idx_cmp_t;
+
+static int idx_compare_jump(chidb_stmt *stmt, chidb_dbm_op_t *op,
+                            idx_cmp_t cmp) {
+    int err;
+    int32_t cursor_index = op->p1;
+    int32_t jump_addr = op->p2;
+    int32_t reg_number = op->p3;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
+    if (!EXISTS_REGISTER(stmt, reg_number) ||
+        stmt->reg[reg_number].type != REG_INT32)
+        return CHIDB_EMISMATCH;
+
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+
+    BTreeCell cell;
+    err = cursor_get_cell(cur, &cell);
+    if (err) return err;
+    if (cell.type != PGTYPE_INDEX_LEAF && cell.type != PGTYPE_INDEX_INTERNAL)
+        return CHIDB_EMISMATCH;
+
+    chidb_key_t k = (chidb_key_t)stmt->reg[reg_number].value.i;
+    chidb_key_t idx_key = cell.key;
+    bool match = false;
+    switch (cmp) {
+    case IDX_CMP_GT:
+        match = idx_key > k;
+        break;
+    case IDX_CMP_GE:
+        match = idx_key >= k;
+        break;
+    case IDX_CMP_LT:
+        match = idx_key < k;
+        break;
+    case IDX_CMP_LE:
+        match = idx_key <= k;
+        break;
+    }
+    if (match) stmt->pc = jump_addr;
+    return CHIDB_OK;
+}
 
 /* IdxGt p1 p2 p3 *
  *
@@ -777,8 +819,7 @@ int chidb_dbm_op_Ge (chidb_stmt *stmt, chidb_dbm_op_t *op)
  */
 int chidb_dbm_op_IdxGt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-  fprintf(stderr,"todo: chidb_dbm_op_IdxGt\n");
-  exit(1);
+    return idx_compare_jump(stmt, op, IDX_CMP_GT);
 }
 
 /* IdxGe p1 p2 p3 *
@@ -791,8 +832,7 @@ int chidb_dbm_op_IdxGt (chidb_stmt *stmt, chidb_dbm_op_t *op)
  */
 int chidb_dbm_op_IdxGe (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-  fprintf(stderr,"todo: chidb_dbm_op_IdxGe\n");
-  exit(1);
+    return idx_compare_jump(stmt, op, IDX_CMP_GE);
 }
 
 /* IdxLt p1 p2 p3 *
@@ -805,8 +845,7 @@ int chidb_dbm_op_IdxGe (chidb_stmt *stmt, chidb_dbm_op_t *op)
  */
 int chidb_dbm_op_IdxLt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-  fprintf(stderr,"todo: chidb_dbm_op_IdxLt\n");
-  exit(1);
+    return idx_compare_jump(stmt, op, IDX_CMP_LT);
 }
 
 /* IdxLe p1 p2 p3 *
@@ -819,8 +858,7 @@ int chidb_dbm_op_IdxLt (chidb_stmt *stmt, chidb_dbm_op_t *op)
  */
 int chidb_dbm_op_IdxLe (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-  fprintf(stderr,"todo: chidb_dbm_op_IdxLe\n");
-  exit(1);
+    return idx_compare_jump(stmt, op, IDX_CMP_LE);
 }
 
 
@@ -833,8 +871,34 @@ int chidb_dbm_op_IdxLe (chidb_stmt *stmt, chidb_dbm_op_t *op)
  */
 int chidb_dbm_op_IdxPKey (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-  fprintf(stderr,"todo: chidb_dbm_op_IdxKey\n");
-  exit(1);
+    int err;
+    int32_t cursor_index = op->p1;
+    int32_t reg_number = op->p2;
+
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
+    if (reg_number < 0) return CHIDB_EMISMATCH;
+
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+
+    BTreeCell cell;
+    err = cursor_get_cell(cur, &cell);
+    if (err) return err;
+    chidb_key_t pkey;
+    if (cell.type == PGTYPE_INDEX_LEAF)
+        pkey = cell.fields.indexLeaf.keyPk;
+    else if (cell.type == PGTYPE_INDEX_INTERNAL)
+        pkey = cell.fields.indexInternal.keyPk;
+    else
+        return CHIDB_EMISMATCH;
+    if ((uint32_t)reg_number >= stmt->nReg) {
+        err = chidb_stmt_set_reg(stmt, reg_number + 1, REG_UNSPECIFIED);
+        if (err) return err;
+    }
+    chidb_dbm_register_t *dst = &stmt->reg[reg_number];
+    dst->type = REG_INT32;
+    dst->value.i = (int32_t)pkey;
+    return CHIDB_OK;
 }
 
 /* IdxInsert p1 p2 p3 *
@@ -847,8 +911,23 @@ int chidb_dbm_op_IdxPKey (chidb_stmt *stmt, chidb_dbm_op_t *op)
  */
 int chidb_dbm_op_IdxInsert (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-  fprintf(stderr,"todo: chidb_dbm_op_IdxInsert\n");
-  exit(1);
+    int32_t cursor_index = op->p1;
+    int32_t idx_reg = op->p2;
+    int32_t pk_reg = op->p3;
+
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
+    if (!EXISTS_REGISTER(stmt, idx_reg) || stmt->reg[idx_reg].type != REG_INT32)
+        return CHIDB_EMISMATCH;
+    if (!EXISTS_REGISTER(stmt, pk_reg) || stmt->reg[pk_reg].type != REG_INT32)
+        return CHIDB_EMISMATCH;
+
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    if (cur->type != CURSOR_WRITE) return CHIDB_EMISMATCH;
+
+    chidb_key_t idx_key = (chidb_key_t)stmt->reg[idx_reg].value.i;
+    chidb_key_t pkey = (chidb_key_t)stmt->reg[pk_reg].value.i;
+    return chidb_Btree_insertInIndex(cur->tree, cur->root_page, idx_key, pkey);
 }
 
 
