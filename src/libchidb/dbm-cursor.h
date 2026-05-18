@@ -72,5 +72,7 @@ typedef struct chidb_dbm_cursor
 int cursor_traverse_leftmost(chidb_dbm_cursor_t *cur, uint32_t start_page_num);
 int cursor_rewind(chidb_dbm_cursor_t *cur);
 int cursor_get_cell(chidb_dbm_cursor_t *cur, BTreeCell *out_cell);
+int cursor_next(chidb_dbm_cursor_t *cur);
+int cursor_prev(chidb_dbm_cursor_t *cur);
 
 #endif /* DBM_CURSOR_H_ */

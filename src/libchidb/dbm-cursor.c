@@ -40,9 +40,6 @@
 
 #include "dbm-cursor.h"
 #include "chidb/chidb.h"
-#include "libchidb/btree.h"
-#include "libchidb/chidbInt.h"
-#include "libchidb/pager.h"
 
 /* Your code goes here */
 
@@ -78,6 +75,38 @@ int cursor_traverse_leftmost(chidb_dbm_cursor_t *cur, uint32_t start_page_num) {
         current_page = node->type == PGTYPE_TABLE_INTERNAL
                            ? cell.fields.tableInternal.child_page
                            : cell.fields.indexInternal.child_page;
+        chidb_Btree_freeMemNode(cur->tree, node);
+    }
+    return CHIDB_OK;
+}
+
+int cursor_traverse_rightmost(chidb_dbm_cursor_t *cur,
+                              uint32_t start_page_num) {
+    uint32_t current_page = start_page_num;
+    while (true) {
+        BTreeNode *node;
+        int err;
+        err = chidb_Btree_getNodeByPage(cur->tree, current_page, &node);
+        if (err) {
+            return err;
+        }
+        cur->top++;
+        if (cur->top >= MAX_CURSOR_DEPTH) {
+            chidb_Btree_freeMemNode(cur->tree, node);
+            return CHIDB_ENOMEM;
+        }
+        cur->path_stack[cur->top].pagenum = current_page;
+        if (node->type == PGTYPE_TABLE_LEAF ||
+            node->type == PGTYPE_INDEX_LEAF) {
+            cur->path_stack[cur->top].cell_idx =
+                (node->n_cells > 0) ? node->n_cells - 1 : 0;
+            chidb_Btree_freeMemNode(cur->tree, node);
+            return CHIDB_OK;
+        }
+
+        // get the right most page
+        cur->path_stack[cur->top].cell_idx = node->n_cells;
+        current_page = node->right_page;
         chidb_Btree_freeMemNode(cur->tree, node);
     }
     return CHIDB_OK;
@@ -139,6 +168,47 @@ int cursor_next(chidb_dbm_cursor_t *cur) {
     return CHIDB_DONE;
 }
 
+int cursor_prev(chidb_dbm_cursor_t *cur) {
+    int err;
+    while (cur->top >= 0) {
+        CursorFrame *frame = &cur->path_stack[cur->top];
+        BTreeNode *node;
+        err = chidb_Btree_getNodeByPage(cur->tree, frame->pagenum, &node);
+        if (err) return err;
+        if (node->type == PGTYPE_TABLE_LEAF ||
+            node->type == PGTYPE_INDEX_LEAF) {
+            if (frame->cell_idx > 0) {
+                frame->cell_idx--;
+                chidb_Btree_freeMemNode(cur->tree, node);
+                return CHIDB_OK;
+            }
+            chidb_Btree_freeMemNode(cur->tree, node);
+            cur->top--;
+            continue;
+        }
+        if (frame->cell_idx > 0) {
+            frame->cell_idx--;
+            BTreeCell cell;
+            err = chidb_Btree_getCell(node, frame->cell_idx, &cell);
+            if (err) {
+                chidb_Btree_freeMemNode(cur->tree, node);
+                return err;
+            }
+            npage_t prev_branch_page =
+                (cell.type == PGTYPE_TABLE_INTERNAL)
+                    ? cell.fields.tableInternal.child_page
+                    : cell.fields.indexInternal.child_page;
+            chidb_Btree_freeMemNode(cur->tree, node);
+            return cursor_traverse_rightmost(cur, prev_branch_page);
+        } else {
+            chidb_Btree_freeMemNode(cur->tree, node);
+            cur->top--;
+            continue;
+        }
+    }
+    return CHIDB_DONE;
+}
+
 int cursor_get_cell(chidb_dbm_cursor_t *cur, BTreeCell *out_cell) {
     int err;
     if (cur->top < 0) return CHIDB_DONE;
@@ -147,6 +217,10 @@ int cursor_get_cell(chidb_dbm_cursor_t *cur, BTreeCell *out_cell) {
     err = chidb_Btree_getNodeByPage(cur->tree, frame->pagenum, &node);
     if (err) {
         return err;
+    }
+    if (frame->cell_idx >= node->n_cells) {
+        chidb_Btree_freeMemNode(cur->tree, node);
+        return CHIDB_DONE;
     }
     BTreeCell cell;
     err = chidb_Btree_getCell(node, frame->cell_idx, &cell);

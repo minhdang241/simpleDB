@@ -40,9 +40,6 @@
 #include "chidb/chidb.h"
 #include "dbm.h"
 #include "btree.h"
-#include "libchidb/chidbInt.h"
-#include "libchidb/dbm-cursor.h"
-#include "libchidb/dbm-types.h"
 #include "record.h"
 #include <stdint.h>
 
@@ -89,9 +86,8 @@ int chidb_dbm_op_Noop (chidb_stmt *stmt, chidb_dbm_op_t *op)
     return CHIDB_OK;
 }
 
-
-int chidb_dbm_op_OpenRead (chidb_stmt *stmt, chidb_dbm_op_t *op)
-{
+static int open_cursor(chidb_stmt *stmt, chidb_dbm_op_t *op,
+                       chidb_dbm_cursor_type_t type) {
     int32_t cursor_index = op->p1;
     if (cursor_index < 0) return CHIDB_EMISMATCH;
 
@@ -114,33 +110,51 @@ int chidb_dbm_op_OpenRead (chidb_stmt *stmt, chidb_dbm_op_t *op)
         stmt->nCursors = new_size;
     }
     chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
-    cur->type = CURSOR_READ;
+    cur->type = type;
     cur->tree = stmt->db->bt;
     cur->root_page = root_page;
     cur->top = -1;
     return CHIDB_OK;
 }
 
+int chidb_dbm_op_OpenRead(chidb_stmt *stmt, chidb_dbm_op_t *op) {
+    return open_cursor(stmt, op, CURSOR_READ);
+}
 
 int chidb_dbm_op_OpenWrite (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
-
-    return CHIDB_OK;
+    return open_cursor(stmt, op, CURSOR_WRITE);
 }
 
 
 int chidb_dbm_op_Close (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
     /* Your code goes here */
-
+    int32_t cursor_index = op->p1;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    cur->type = CURSOR_UNSPECIFIED;
+    cur->top = -1;
     return CHIDB_OK;
 }
 
 
 int chidb_dbm_op_Rewind (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int err;
+    int32_t cursor_index = op->p1;
+    int32_t jump_addr = op->p2;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
+
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    err = cursor_rewind(cur);
+    if (err) return err;
+    BTreeCell cell;
+    if (cursor_get_cell(cur, &cell) == CHIDB_DONE) {
+        stmt->pc = jump_addr;
+    }
 
     return CHIDB_OK;
 }
@@ -148,23 +162,43 @@ int chidb_dbm_op_Rewind (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_Next (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int err;
+    int32_t cursor_index = op->p1;
+    int32_t jump_addr = op->p2;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
 
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    err = cursor_next(cur);
+    if (err == CHIDB_DONE) return CHIDB_OK;
+    if (err) return err;
+    stmt->pc = jump_addr;
     return CHIDB_OK;
 }
 
 
 int chidb_dbm_op_Prev (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int err;
+    int32_t cursor_index = op->p1;
+    int32_t jump_addr = op->p2;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
 
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    err = cursor_prev(cur);
+    if (err == CHIDB_DONE) return CHIDB_OK;
+    if (err) return err;
+    stmt->pc = jump_addr;
     return CHIDB_OK;
 }
 
 
 int chidb_dbm_op_Seek (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t cursor_index = op->p1;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
 
     return CHIDB_OK;
 }
@@ -172,7 +206,9 @@ int chidb_dbm_op_Seek (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_SeekGt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t cursor_index = op->p1;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
 
     return CHIDB_OK;
 }
@@ -180,14 +216,18 @@ int chidb_dbm_op_SeekGt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_SeekGe (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t cursor_index = op->p1;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
 
     return CHIDB_OK;
 }
 
 int chidb_dbm_op_SeekLt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t cursor_index = op->p1;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
 
     return CHIDB_OK;
 }
@@ -195,7 +235,9 @@ int chidb_dbm_op_SeekLt (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_SeekLe (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t cursor_index = op->p1;
+    if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
+        return CHIDB_EMISMATCH;
 
     return CHIDB_OK;
 }
