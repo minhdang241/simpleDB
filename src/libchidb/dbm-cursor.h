@@ -76,5 +76,9 @@ int cursor_next(chidb_dbm_cursor_t *cur);
 int cursor_prev(chidb_dbm_cursor_t *cur);
 
 int cursor_seek(chidb_dbm_cursor_t *cur, chidb_key_t key);
+int cursor_seek_gt(chidb_dbm_cursor_t *cur, chidb_key_t target);
+int cursor_seek_ge(chidb_dbm_cursor_t *cur, chidb_key_t target);
+int cursor_seek_lt(chidb_dbm_cursor_t *cur, chidb_key_t target);
+int cursor_seek_le(chidb_dbm_cursor_t *cur, chidb_key_t target);
 
 #endif /* DBM_CURSOR_H_ */
