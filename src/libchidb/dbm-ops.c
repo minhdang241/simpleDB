@@ -37,11 +37,14 @@
  *
  */
 
-
+#include "chidb/chidb.h"
 #include "dbm.h"
 #include "btree.h"
+#include "libchidb/chidbInt.h"
+#include "libchidb/dbm-cursor.h"
+#include "libchidb/dbm-types.h"
 #include "record.h"
-
+#include <stdint.h>
 
 /* Function pointer for dispatch table */
 typedef int (*handler_function)(chidb_stmt *stmt, chidb_dbm_op_t *op);
@@ -89,8 +92,32 @@ int chidb_dbm_op_Noop (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_OpenRead (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int32_t cursor_index = op->p1;
+    if (cursor_index < 0) return CHIDB_EMISMATCH;
 
+    int32_t reg_number = op->p2;
+    if (!EXISTS_REGISTER(stmt, reg_number) ||
+        stmt->reg[reg_number].type != REG_INT32) {
+        return CHIDB_EMISMATCH;
+    }
+    npage_t root_page = (npage_t)stmt->reg[reg_number].value.i;
+
+    if ((uint32_t)cursor_index >= stmt->nCursors) {
+        uint32_t new_size = cursor_index + 1;
+        chidb_dbm_cursor_t *new_cursors =
+            realloc(stmt->cursors, sizeof(chidb_dbm_cursor_t) * new_size);
+        if (!new_cursors) return CHIDB_ENOMEM;
+        for (uint32_t i = stmt->nCursors; i < new_size; i++) {
+            new_cursors[i].type = CURSOR_UNSPECIFIED;
+        }
+        stmt->cursors = new_cursors;
+        stmt->nCursors = new_size;
+    }
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    cur->type = CURSOR_READ;
+    cur->tree = stmt->db->bt;
+    cur->root_page = root_page;
+    cur->top = -1;
     return CHIDB_OK;
 }
 
