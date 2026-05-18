@@ -75,4 +75,6 @@ int cursor_get_cell(chidb_dbm_cursor_t *cur, BTreeCell *out_cell);
 int cursor_next(chidb_dbm_cursor_t *cur);
 int cursor_prev(chidb_dbm_cursor_t *cur);
 
+int cursor_seek(chidb_dbm_cursor_t *cur, chidb_key_t key);
+
 #endif /* DBM_CURSOR_H_ */

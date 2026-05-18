@@ -196,11 +196,26 @@ int chidb_dbm_op_Prev (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_Seek (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
+    int err;
     int32_t cursor_index = op->p1;
+    int32_t jump_addr = op->p2;
+    int32_t reg_number = op->p3;
+
     if (cursor_index < 0 || !EXISTS_CURSOR(stmt, cursor_index))
         return CHIDB_EMISMATCH;
+    if (!EXISTS_REGISTER(stmt, reg_number) ||
+        stmt->reg[reg_number].type != REG_INT32)
+        return CHIDB_EMISMATCH;
 
-    return CHIDB_OK;
+    chidb_dbm_cursor_t *cur = &stmt->cursors[cursor_index];
+    chidb_key_t key = (chidb_key_t)stmt->reg[reg_number].value.i;
+
+    err = cursor_seek(cur, key);
+    if (err == CHIDB_ENOTFOUND) {
+        stmt->pc = jump_addr;
+        return CHIDB_OK;
+    }
+    return err; /* CHIDB_OK on hit, or a real error */
 }
 
 

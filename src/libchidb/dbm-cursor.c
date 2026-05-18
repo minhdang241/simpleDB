@@ -232,3 +232,71 @@ int cursor_get_cell(chidb_dbm_cursor_t *cur, BTreeCell *out_cell) {
     *out_cell = cell;
     return CHIDB_OK;
 }
+
+int cursor_seek(chidb_dbm_cursor_t *cur, chidb_key_t key) {
+    int err;
+    cur->top = -1;
+    uint32_t current_page = cur->root_page;
+    while (true) {
+        BTreeNode *node;
+        err = chidb_Btree_getNodeByPage(cur->tree, current_page, &node);
+        if (err) return err;
+        cur->top++;
+        if (cur->top >= MAX_CURSOR_DEPTH) {
+            chidb_Btree_freeMemNode(cur->tree, node);
+            return CHIDB_ENOMEM;
+        }
+        cur->path_stack[cur->top].pagenum = current_page;
+        if (node->type == PGTYPE_TABLE_LEAF) {
+            for (ncell_t i = 0; i < node->n_cells; i++) {
+                BTreeCell cell;
+                err = chidb_Btree_getCell(node, i, &cell);
+                if (err) {
+                    chidb_Btree_freeMemNode(cur->tree, node);
+                    return err;
+                }
+                if (cell.key == key) {
+                    cur->path_stack[cur->top].cell_idx = i;
+                    chidb_Btree_freeMemNode(cur->tree, node);
+                    return CHIDB_OK;
+                }
+                if (cell.key > key) break;
+            }
+            chidb_Btree_freeMemNode(cur->tree, node);
+            return CHIDB_ENOTFOUND;
+        }
+        if (node->type == PGTYPE_TABLE_INTERNAL) {
+            ncell_t descend_idx = node->n_cells;
+            for (ncell_t i = 0; i < node->n_cells; i++) {
+                BTreeCell cell;
+                err = chidb_Btree_getCell(node, i, &cell);
+                if (err) {
+                    chidb_Btree_freeMemNode(cur->tree, node);
+                    return err;
+                }
+                if (cell.key >= key) {
+                    descend_idx = i;
+                    break;
+                }
+            }
+            cur->path_stack[cur->top].cell_idx = descend_idx;
+            npage_t next_page;
+            if (descend_idx == node->n_cells) {
+                next_page = node->right_page;
+            } else {
+                BTreeCell cell;
+                err = chidb_Btree_getCell(node, descend_idx, &cell);
+                if (err) {
+                    chidb_Btree_freeMemNode(cur->tree, node);
+                    return err;
+                }
+                next_page = cell.fields.tableInternal.child_page;
+            }
+            chidb_Btree_freeMemNode(cur->tree, node);
+            current_page = next_page;
+            continue;
+        }
+        chidb_Btree_freeMemNode(cur->tree, node);
+        return CHIDB_ENOTFOUND;
+    }
+}
