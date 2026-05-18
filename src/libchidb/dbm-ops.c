@@ -854,19 +854,42 @@ int chidb_dbm_op_IdxInsert (chidb_stmt *stmt, chidb_dbm_op_t *op)
 
 int chidb_dbm_op_CreateTable (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
-    /* Your code goes here */
+    int err;
+    int32_t reg_number = op->p1;
+    if (reg_number < 0) return CHIDB_EMISMATCH;
 
+    npage_t new_page;
+    err = chidb_Btree_newNode(stmt->db->bt, &new_page, PGTYPE_TABLE_LEAF);
+    if (err) return err;
+
+    if ((uint32_t)reg_number >= stmt->nReg) {
+        err = chidb_stmt_set_reg(stmt, reg_number + 1, REG_UNSPECIFIED);
+        if (err) return err;
+    }
+    chidb_dbm_register_t *dst = &stmt->reg[reg_number];
+    dst->type = REG_INT32;
+    dst->value.i = (int32_t)new_page;
     return CHIDB_OK;
 }
 
+int chidb_dbm_op_CreateIndex(chidb_stmt *stmt, chidb_dbm_op_t *op) {
+    int err;
+    int32_t reg_number = op->p1;
+    if (reg_number < 0) return CHIDB_EMISMATCH;
 
-int chidb_dbm_op_CreateIndex (chidb_stmt *stmt, chidb_dbm_op_t *op)
-{
-    /* Your code goes here */
+    npage_t new_page;
+    err = chidb_Btree_newNode(stmt->db->bt, &new_page, PGTYPE_INDEX_LEAF);
+    if (err) return err;
 
+    if ((uint32_t)reg_number >= stmt->nReg) {
+        err = chidb_stmt_set_reg(stmt, reg_number + 1, REG_UNSPECIFIED);
+        if (err) return err;
+    }
+    chidb_dbm_register_t *dst = &stmt->reg[reg_number];
+    dst->type = REG_INT32;
+    dst->value.i = (int32_t)new_page;
     return CHIDB_OK;
 }
-
 
 int chidb_dbm_op_Copy (chidb_stmt *stmt, chidb_dbm_op_t *op)
 {
