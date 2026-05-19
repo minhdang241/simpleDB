@@ -68,5 +68,11 @@ void chidb_BTree_stringPrinter(BTreeNode *btn, BTreeCell *btc);
 
 FILE *copy(const char *from, const char *to);
 
+int chidb_table_exists(chidb *db, const char *table_name);
+npage_t chidb_table_root_page(chidb *db, const char *table_name);
+int chidb_column_exists(chidb *db, const char *table_name,
+                        const char *col_name);
+enum data_type chidb_column_datatype(chidb *db, const char *table_name,
+                                     const char *col_name);
 
 #endif /*UTIL_H_*/

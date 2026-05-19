@@ -43,6 +43,8 @@
 #include <ctype.h>
 #include "chidbInt.h"
 #include "util.h"
+#include "chisql/chisql.h"
+#include "chisql/create.h"
 #include "record.h"
 
 /*
@@ -282,3 +284,47 @@ int chidb_tokenize(char *str, char ***tokens)
     return ntokens;
 }
 
+static chidb_schema_item_t *find_table_schema(chidb *db,
+                                              const char *table_name) {
+    for (int i = 0; i < db->nschema; i++) {
+        if (strcmp(db->schema[i].type, "table") == 0 &&
+            strcmp(db->schema[i].name, table_name) == 0)
+            return &db->schema[i];
+    }
+    return NULL;
+}
+
+static Column_t *find_column(chidb_schema_item_t *item, const char *col_name) {
+    if (item->stmt->type != STMT_CREATE) {
+        return NULL;
+    }
+    Create_t *create = item->stmt->stmt.create;
+    if (create->t != CREATE_TABLE) {
+        return NULL;
+    }
+    Column_t *col = create->table->columns;
+    while (col != NULL) {
+        if (strcmp(col->name, col_name) == 0) return col;
+        col = col->next;
+    }
+    return NULL;
+}
+
+int chidb_table_exists(chidb *db, const char *table_name) {
+    return find_table_schema(db, table_name) != NULL;
+}
+int chidb_column_exists(chidb *db, const char *table_name,
+                        const char *col_name) {
+    chidb_schema_item_t *item = find_table_schema(db, table_name);
+    if (item == NULL) return 0;
+    return find_column(item, col_name) != NULL;
+}
+
+enum data_type chidb_column_datatype(chidb *db, const char *table_name,
+                                     const char *col_name) {
+    chidb_schema_item_t *item = find_table_schema(db, table_name);
+    if (item == NULL) return -1;
+    Column_t *col = find_column(item, col_name);
+    if (col == NULL) return -1;
+    return col->type;
+}

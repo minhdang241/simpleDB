@@ -41,6 +41,7 @@
 #ifndef CHIDBINT_H_
 #define CHIDBINT_H_
 
+#include "chisql/chisql.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -81,9 +82,18 @@ typedef struct BTree BTree;
  * If other parts of the chidb Architecture are implemented, the
  * chidb struct may have to be modified.
  */
+typedef struct chidb_schema_item {
+    char *type;
+    char *name;
+    char *assoc;
+    npage_t root_page;
+    chisql_statement_t *stmt;
+} chidb_schema_item_t;
 struct chidb
 {
     BTree   *bt;
+    chidb_schema_item_t *schema;
+    int nschema;
 };
 
 #endif /*CHIDBINT_H_*/
